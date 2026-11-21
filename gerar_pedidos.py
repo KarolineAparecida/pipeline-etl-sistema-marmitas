@@ -6,42 +6,58 @@ try:
     conexao = mysql.connector.connect(
         host="localhost",
         user="root",
-        password="SUA_SENHA_AQUI",
+        password="SENHA", 
         database="sistema_marmitas"
     )
     cursor = conexao.cursor()
 
-    print("Iniciando o Pipeline de ETL...")
+    print("Iniciando o Pipeline de ETL (Versão 2.0)...")
 
-    # 2. EXTRAÇÃO (Extract - Letra E do ETL)
-    # O Python vai lá no MySQL e busca quem são os clientes cadastrados
+    # 2. EXTRAÇÃO (Buscando Clientes e o Cardápio)
     cursor.execute("SELECT id_cliente FROM clientes;")
     clientes_encontrados = cursor.fetchall() 
     
-    if not clientes_encontrados:
-        print("Nenhum cliente encontrado. Verifique a tabela 'clientes'.")
+    # Nova Extração: Busca o ID e o Preço de cada prato disponível
+    cursor.execute("SELECT id_prato, preco FROM pratos;")
+    pratos_disponiveis = cursor.fetchall()
+    
+    if not clientes_encontrados or not pratos_disponiveis:
+        print("Erro: Verifique se existem clientes e pratos cadastrados no banco.")
     else:
-        print(f"Sucesso na Extração! {len(clientes_encontrados)} clientes encontrados.")
-        print("Iniciando a geração de pedidos...")
+        print(f"Sucesso! {len(clientes_encontrados)} clientes e {len(pratos_disponiveis)} pratos encontrados.")
+        print("Gerando pedidos com itens reais e somando os valores da conta...")
 
-        # 3. TRANSFORMAÇÃO E CARGA (Transform & Load - Letras T e L)
-        # Para cada cliente que o Python encontrou, ele vai gerar um pedido novo
+        # 3. TRANSFORMAÇÃO E CARGA
         for cliente in clientes_encontrados:
             id_do_cliente = cliente[0] 
             
-            # Sorteia um valor de conta entre 50 e 250 reais para ficar realista
-            valor_da_compra = random.uniform(50.0, 250.0) 
+            # Sorteia quantos pratos o cliente vai comprar (de 1 a 3 marmitas)
+            qtd_itens = random.randint(1, 3)
             
-            # Prepara a injeção na Tabela Fato (Pedidos)
-            # O status será "Entregue" e o motorista ainda fica vazio (NULL) pela nossa regra de negócio
+            # Escolhe aleatoriamente os pratos para compor o pedido
+            pratos_escolhidos = random.choices(pratos_disponiveis, k=qtd_itens)
+            
+            # Calcula o valor total SOMANDO os preços reais dos pratos sorteados
+            # prato[1] é a coluna 'preco' que puxamos do banco de dados
+            valor_da_compra = sum(prato[1] for prato in pratos_escolhidos)
+            
+            # A) Injeção na Tabela Fato (Pedidos) - A capa da nota fiscal
             sql_pedido = "INSERT INTO pedidos (id_cliente, status_pedido, valor_total) VALUES (%s, %s, %s)"
             valores_pedido = (id_do_cliente, "Entregue", round(valor_da_compra, 2))
-            
             cursor.execute(sql_pedido, valores_pedido)
+            
+            # Recupera o ID do pedido que o MySQL acabou de gerar para anexar os itens
+            id_do_pedido_gerado = cursor.lastrowid
+            
+            # B) Injeção na Tabela Associativa (Itens do Pedido) - A lista detalhada
+            sql_item = "INSERT INTO itens_pedido (id_pedido, id_prato) VALUES (%s, %s)"
+            for prato in pratos_escolhidos:
+                id_do_prato = prato[0]
+                cursor.execute(sql_item, (id_do_pedido_gerado, id_do_prato))
 
-        # Regra de Ouro: Confirmar a gravação no banco
+        # Regra de Ouro: Confirmar a gravação transacional ponta a ponta
         conexao.commit()
-        print("Carga concluída! Os pedidos foram registrados no banco com sucesso.")
+        print("Carga concluída! Os pedidos e os itens foram registrados com sucesso.")
 
 except mysql.connector.Error as erro:
     print(f"Erro ao processar os dados: {erro}")
